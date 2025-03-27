@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #f4f4f4;
+        }
+
+        .container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+        }
+
+        .controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: white;
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1);
+            margin-bottom: 10px;
+        }
+
+        .legend {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .gradient {
+            width: 100px;
+            height: 10px;
+            background: linear-gradient(to right, green, red);
+        }
+
+        .labels {
+            display: flex;
+            justify-content: space-between;
+            width: 100px;
+            font-size: 12px;
+        }
+
+        .tooltip {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 5px;
+            border-radius: 3px;
+            font-size: 14px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .tooltip.hidden {
+            opacity: 0;
+        }
+
+        #map {
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="controls">
+            <div>
+                <label for="month">Selecione o mês:</label>
+                <select id="month">
+                    <option value="1">Janeiro</option>
+                    <option value="2">Fevereiro</option>
+                    <option value="3">Março</option>
+                    <option value="4">Abril</option>
+                    <option value="5">Maio</option>
+                    <option value="6">Junho</option>
+                    <option value="7">Julho</option>
+                    <option value="8">Agosto</option>
+                    <option value="9">Setembro</option>
+                    <option value="10">Outubro</option>
+                    <option value="11">Novembro</option>
+                    <option value="12">Dezembro</option>
+                </select>
+            </div>
+            <div>
+                <label for="year">Digite o ano:</label>
+                <input type="number" id="year" placeholder="2025" maxlength="4">
+            </div>
+            <div class="legend">
+                <span>Legenda:</span>
+                <div class="gradient"></div>
+                <div class="labels">
+                    <span>TAE BOM</span>
+                    <span>TAE RUIM</span>
+                </div>
+            </div>
+        </div>
+        <svg id="map"></svg>
+    </div>
+    <div id="tooltip" class="tooltip hidden"></div>
+    
+    <script type="module">
+        import * as d3 from "https://cdn.jsdelivr.net/npm/d3@7/+esm";
+
+        document.addEventListener("DOMContentLoaded", function () {
+        const svg = d3.select("#map");
+        const svgElement = document.getElementById("map");
+        let tooltip = document.getElementById("tooltip");
+    
+        
+        async function loadMap() {
+            const fileName = "merged-rewind.geojson";
+            const response = await fetch(`/${fileName}`);
+            const geojson = await response.json();
+            showMap(geojson);
+        }
+
+        function showMap(geojson) {
+            svg.selectAll("*").remove();
+            const features = geojson.features.filter(feature => 
+            feature.geometry?.type === "Polygon" || feature.geometry?.type === "MultiPolygon"
+            );
+            
+            const fixedGeojson = { type: "FeatureCollection", features };
+            const { width, height } = svgElement.getBoundingClientRect();
+            const g = svg.append("g");
+            
+            const projection = d3.geoMercator().fitSize([width, height], fixedGeojson);
+            const path = d3.geoPath().projection(projection);
+            
+            g.selectAll("path")
+            .data(fixedGeojson.features)
+            .enter()
+            .append("path")
+            .attr("d", path)
+            .attr("fill", () => `rgb(${Math.random() * 255}, ${Math.random() * 255}, ${Math.random() * 255})`)
+            .attr("stroke", "black")
+            .attr("stroke-width", 0.5)
+            .on("mouseover", function (event, d) {
+                tooltip.style.display = "block";
+                tooltip.style.left = `${event.clientX}px`;
+                tooltip.style.top = `${event.clientY - 50}px`;
+                tooltip.innerHTML = `<strong>LOCAL: ${d.properties["Municipio"] || d.properties["Name"]}</strong>`;
+                d3.select(this).attr("fill", "#7FC241");
+            })
+            .on("mouseout", function () {
+                tooltip.style.display = "none";
+                d3.select(this).attr("fill", () => `rgb(${Math.random() * 255}, ${Math.random() * 255}, ${Math.random() * 255})`);
+            })
+            
+            svg.call(d3.zoom().on("zoom", event => g.attr("transform", event.transform)));
+        }
+
+
+        loadMap();
+        window.addEventListener("resize", loadMap);
+        });
+
+    </script>
+</body>
+</html>
