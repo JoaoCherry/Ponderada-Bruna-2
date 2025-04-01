@@ -54,14 +54,19 @@
 
         .tooltip {
             position: absolute;
-            background: rgba(0, 0, 0, 0.7);
+            background: rgba(0, 0, 0, 0.9);
             color: white;
-            padding: 5px;
+            padding: 12px;
             border-radius: 3px;
             font-size: 14px;
             pointer-events: none;
-            opacity: 0;
+            opacity: 1;
             transition: opacity 0.2s;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            border-radius: 8px;
+            font-size: 1.2rem;
         }
 
         .tooltip.hidden {
@@ -72,6 +77,31 @@
             width: 100%;
             height: 100%;
         }
+
+        .time-control {
+            width: 100%;
+            margin: 10px 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        
+        .time-slider-container {
+            width: 100%;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        #day-slider {
+            flex-grow: 1;
+        }
+        
+        .day-display {
+            font-weight: bold;
+            min-width: 30px;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
@@ -79,10 +109,10 @@
         <div class="controls">
             <div>
                 <label for="month">Selecione o mês:</label>
-                <select id="month">
+                <select id="month" >
                     <option value="1">Janeiro</option>
                     <option value="2">Fevereiro</option>
-                    <option value="3">Março</option>
+                    <option value="3" selected>Março</option>
                     <option value="4">Abril</option>
                     <option value="5">Maio</option>
                     <option value="6">Junho</option>
@@ -106,6 +136,23 @@
                     <span>TAE RUIM</span>
                 </div>
             </div>
+            <div>
+                <label for="type">
+                    Tipo de chamado:
+                    <select id="type" onchange="callType = this.value;console.log(callType)">
+                        <option value="FALTA_DE_GÁS">FALTA DE GÁS</option>
+                        <option value="VAZAMENTO_INTERNO">VAZAMENTO INTERNO</option>
+                        <option value="VAZAMENTO_NA_REDE">VAZAMENTO NA REDE</option>
+                    </select>
+                </label>
+            </div>
+        </div>
+        <div class="time-control">
+            <div class="time-slider-container">
+                <span>Dia: </span>
+                <input type="range" id="day-slider" min="1" max="31" value="1">
+                <span class="day-display" id="day-display">1</span>
+            </div>
         </div>
         <svg id="map"></svg>
     </div>
@@ -114,20 +161,52 @@
     <script type="module">
         import * as d3 from "https://cdn.jsdelivr.net/npm/d3@7/+esm";
 
-        document.addEventListener("DOMContentLoaded", function () {
+        let data = null;
+
         const svg = d3.select("#map");
         const svgElement = document.getElementById("map");
         let tooltip = document.getElementById("tooltip");
-    
-        
-        async function loadMap() {
-            const fileName = "merged-rewind.geojson";
-            const response = await fetch(`/${fileName}`);
-            const geojson = await response.json();
-            showMap(geojson);
+
+        function calculateCumulate(data, day, region) {
+            const regionData = data[`${month}-${year}`]?.estatisticasRegionais[region];
+            if (regionData) {
+                const dailyStats = regionData.estatisticasDiarias.reduce((acc, daily) => {
+                    if (daily.dia <= day) {
+                        acc.tempoMedio += daily.tempoMedioPorTipo[callType];
+                        acc.quantidade += daily.quantidadePorTipo[callType];
+                        acc.daysCounted += 1;
+                    }
+                    return acc;
+                }, { tempoMedio: 0, quantidade: 0, daysCounted: 0 });
+                if (dailyStats.daysCounted > 0) {
+                    return {
+                        tempoMedio: dailyStats.tempoMedio / dailyStats.daysCounted,
+                        quantidade: dailyStats.quantidade,
+                        daysCounted: dailyStats.daysCounted
+                    };
+                }
+            }
+            return { tempoMedio: 0, quantidade: 0, daysCounted: 0 };
         }
 
-        function showMap(geojson) {
+        let geojson = null;
+
+        function getGradientColor(averageTime, maxTime) {
+            if (!maxTime || averageTime <= 0) return "rgb(0, 255, 0)"; // Verde se maxTime for 0 ou tempo for negativo
+
+            const ratio = Math.min(1, Math.max(0, averageTime / maxTime)); // Mantém ratio entre 0 e 1
+
+            const red = Math.round(ratio * 255); // Quanto maior o tempo, mais vermelho
+            const green = Math.round((1 - ratio) * 255); // Quanto menor o tempo, mais verde
+
+            return `rgb(${red}, ${green}, 0)`;
+        }
+
+
+
+        function showMap() {
+            if (!geojson || !data) return;
+
             svg.selectAll("*").remove();
             const features = geojson.features.filter(feature => 
             feature.geometry?.type === "Polygon" || feature.geometry?.type === "MultiPolygon"
@@ -145,24 +224,146 @@
             .enter()
             .append("path")
             .attr("d", path)
-            .attr("fill", () => `rgb(${Math.random() * 255}, ${Math.random() * 255}, ${Math.random() * 255})`)
+            .attr("fill", function (d) {
+                const region = data[`${month}-${year}`]?.estatisticasRegionais[d.properties["Municipio"] || d.properties["Name"]];
+                if (region) {
+                    const dailyStats = region.estatisticasDiarias.find(daily => daily.dia === day);
+                    if (dailyStats) {
+                        const averageTime = dailyStats.tempoMedioPorTipo[callType];
+                        let maxTime = 0
+                        if (callType === "FALTA_DE_GÁS") {
+                            maxTime = 240;
+                        } else if (callType === "VAZAMENTO_INTERNO") {
+                            maxTime = 60;
+                        } else if (callType === "VAZAMENTO_NA_REDE") {
+                            maxTime = 60;
+                        }
+                        const cumulate = calculateCumulate(data, day, d.properties["Municipio"] || d.properties["Name"]);
+                        const color =  getGradientColor(cumulate.tempoMedio, maxTime);
+                        d3.select(this).attr("data-original-fill", color);
+                        const ratio = Math.min(1, Math.max(0, cumulate.tempoMedio / maxTime)); // Mantém ratio entre 0 e 1
+                        console.log(`Local: ${d.properties["Municipio"] || d.properties["Name"]}, Tempo médio: ${averageTime}, Máximo: ${maxTime}, Ratio: ${ratio}, Cor: ${getGradientColor(averageTime, maxTime)}, CallType: ${callType}, Dia: ${day}`);
+
+                        return color;
+                    }
+                }
+                d3.select(this).attr("data-original-fill", "rgb(255, 255, 255)");
+
+                return "rgb(255, 255, 255)";
+            })
             .attr("stroke", "black")
             .attr("stroke-width", 0.5)
-            .on("mouseover", function (event, d) {
+            .on("mousemove", function (event, d) {
                 tooltip.style.display = "block";
                 tooltip.style.left = `${event.clientX}px`;
                 tooltip.style.top = `${event.clientY - 50}px`;
-                tooltip.innerHTML = `<strong>LOCAL: ${d.properties["Municipio"] || d.properties["Name"]}</strong>`;
-                d3.select(this).attr("fill", "#7FC241");
+                tooltip.innerHTML = `<p><strong>LOCAL: ${d.properties["Municipio"] || d.properties["Name"]}</strong></p>`;
+                tooltip.innerHTML += `<p>Tipo de chamado: ${callType}</p>`;
+                const region = data[`${month}-${year}`]?.estatisticasRegionais[d.properties["Municipio"] || d.properties["Name"]];
+                if (region) {
+                    const dailyStats = region.estatisticasDiarias.find(daily => daily.dia === day);
+                    if (dailyStats) {
+                        tooltip.innerHTML += `<p>Tempo médio: ${dailyStats.tempoMedioPorTipo[callType]} minutos</p>`;
+                        tooltip.innerHTML += `<p>Quantidade: ${dailyStats.quantidadePorTipo[callType]}</p>`;
+                    }
+                    const cumulate = calculateCumulate(data, day, d.properties["Municipio"] || d.properties["Name"]);
+                    tooltip.innerHTML += `<p>Tempo médio do acumulado: ${cumulate.tempoMedio} minutos</p>`;
+                    tooltip.innerHTML += `<p>Quantidade acumulada: ${cumulate.quantidade}</p>`;
+                }
+                tooltip.classList.remove("hidden");
+                
+                d3.select(this).attr("fill", "#000");
             })
-            .on("mouseout", function () {
+            .on("mouseout", function (d) {
                 tooltip.style.display = "none";
-                d3.select(this).attr("fill", () => `rgb(${Math.random() * 255}, ${Math.random() * 255}, ${Math.random() * 255})`);
+                tooltip.classList.add("hidden");
+                d3.select(this).attr("fill", d3.select(this).attr("data-original-fill"));
             })
             
             svg.call(d3.zoom().on("zoom", event => g.attr("transform", event.transform)));
         }
 
+
+        async function loadMap() {
+            const fileName = "merged-rewind.geojson";
+            const response = await fetch(`/${fileName}`);
+            const geojsonResponse = await response.json();
+            geojson = geojsonResponse;
+            showMap();
+        }
+
+
+        let callType = "FALTA_DE_GÁS"
+
+        const typeSelect = document.getElementById("type");
+        const monthSelect = document.getElementById("month");
+        const yearInput = document.getElementById("year");
+        const daySlider = document.getElementById("day-slider");
+
+        yearInput.value = 2025;
+
+        let month = monthSelect.value;
+        let year = yearInput.value;
+        let day = 1;
+
+
+
+        /*
+        Estrutura dos dados gerados:
+        mês+ano (EX:3-2025)
+            - estatisticasRegionais: contém as estatísticas separadas por região.
+                - regiao: nome da região.
+                    - estatisticasDiarias: lista com os dados diários de cada região.
+                        - dia: número do dia do mês.
+                        - tempoMedioPorTipo: tempo médio de atendimento (em minutos) para cada tipo de problema.
+                            - FALTA_DE_GÁS: tempo médio quando há falta de gás.
+                            - VAZAMENTO_INTERNO: tempo médio para vazamentos internos.
+                            - VAZAMENTO_NA_REDE: tempo médio para vazamentos na rede de distribuição.
+                        - quantidadePorTipo: quantidade de ocorrências registradas para cada tipo de problema.
+                            - FALTA_DE_GÁS: número de registros de falta de gás.
+                            - VAZAMENTO_INTERNO: número de registros de vazamentos internos.
+                            - VAZAMENTO_NA_REDE: número de registros de vazamentos na rede de distribuição.
+        */
+
+
+        monthSelect.addEventListener("change", function () {
+            month = this.value;
+            loadMap()
+            console.log(month);
+        });
+        
+        yearInput.addEventListener("input", function () {
+            year = this.value;
+            showMap()
+            console.log(year);
+        });
+
+        daySlider.addEventListener("input", function () {
+            day = parseInt(this.value);
+            document.getElementById("day-display").innerText = day;
+            showMap();
+        });
+
+        typeSelect.addEventListener("change", function () {
+            callType = this.value;
+            showMap();
+            console.log(callType);
+        });
+
+
+
+        document.addEventListener("DOMContentLoaded", function () {
+
+        async function loadData() {
+            const fileName = `mockData.json`;
+            const response = await fetch(`/${fileName}`);
+            const data = await response.json();
+            return data;
+        }
+
+        
+
+        loadData().then((dataJSON) => data = dataJSON);
 
         loadMap();
         window.addEventListener("resize", loadMap);
